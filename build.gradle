@@ -21,6 +21,13 @@ allprojects {
         mavenCentral()
         // Jitpack is sometimes needed for other libraries.
         maven { url "https://jitpack.io" }
+        // FrostWire Maven repository for jlibtorrent 2.x artifacts
+        maven {
+            url "https://dl.frostwire.com/maven"
+            content {
+                includeGroup "com.frostwire"
+            }
+        }
     }
 }
 
