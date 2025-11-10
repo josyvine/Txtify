@@ -81,6 +81,8 @@ dependencies {
     implementation 'com.google.firebase:firebase-auth'
     implementation 'com.google.firebase:firebase-firestore'
 
-    // TORRENT CLIENT
-    implementation "com.frostwire:jlibtorrent-android-arm64:1.2.17.0"
+    // TORRENT CLIENT - Updated to Maven-supported 2.0.12.7 (latest as of Nov 2025)
+    def jlibtorrentVersion = "2.0.12.7"
+    implementation "com.frostwire:jlibtorrent:$jlibtorrentVersion"
+    implementation "com.frostwire:jlibtorrent-android-arm64:$jlibtorrentVersion"
 }
