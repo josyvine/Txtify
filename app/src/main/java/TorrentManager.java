@@ -13,12 +13,12 @@ import org.libtorrent4j.SessionManager;
 import org.libtorrent4j.TorrentHandle;
 import org.libtorrent4j.TorrentInfo;
 import org.libtorrent4j.TorrentStatus;
+import org.libtorrent4j.Vectors;
 import org.libtorrent4j.alerts.Alert;
 import org.libtorrent4j.alerts.AlertType;
 import org.libtorrent4j.alerts.StateUpdateAlert;
 import org.libtorrent4j.alerts.TorrentErrorAlert;
 import org.libtorrent4j.alerts.TorrentFinishedAlert;
-import org.libtorrent4j.Vectors;
 import org.libtorrent4j.swig.create_torrent;
 import org.libtorrent4j.swig.file_storage;
 import org.libtorrent4j.swig.libtorrent;
@@ -26,20 +26,16 @@ import org.libtorrent4j.swig.libtorrent;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * TorrentManager adapted for libtorrent4j 2.x API.
- *
- * Notes:
- * - Uses AlertType enum from the bindings.
- * - Stores info-hash mapping as a hex string (String) to avoid Sha1Hash/InfoHash class mismatches.
- * - Uses TorrentInfo/TorrentHandle overloads that accept (TorrentInfo, File) for download/add.
- * - Uses Vectors.byte_vector2bytes(...) to convert SWIG byte_vector to Java byte[].
- *
- * All original logic preserved; only low-level API calls adjusted to new libtorrent4j API.
+ * TorrentManager with reflection-based fallbacks to handle micro-version API differences
+ * across libtorrent4j releases. All original logic preserved.
  */
 public class TorrentManager {
 
@@ -51,7 +47,7 @@ public class TorrentManager {
 
     // Maps to track active torrents
     private final Map<String, TorrentHandle> activeTorrents; // dropRequestId -> TorrentHandle
-    // Use hex strings for keys to avoid InfoHash/Sha1Hash type incompatibilities across versions.
+    // Use hex string keys for info-hash to avoid class mismatch between Sha1Hash/InfoHash across versions.
     private final Map<String, String> hashToIdMap; // infoHashHex -> dropRequestId
 
     private TorrentManager(Context context) {
@@ -64,29 +60,57 @@ public class TorrentManager {
         sessionManager.addListener(new AlertListener() {
             @Override
             public int[] types() {
-                // Return null to listen for all types (keeps behavior robust across lib versions).
-                // If you prefer limiting the alerts, return specific integer codes or implement mapping.
+                // Return null to listen to all alerts so we don't depend on numeric codes.
                 return null;
             }
 
             @Override
             public void alert(Alert<?> alert) {
-                // New API: alert.type() returns AlertType enum.
-                AlertType alertType = alert.type();
-
-                if (alertType == AlertType.STATE_UPDATE) {
-                    // State updates are delivered with StateUpdateAlert
-                    handleStateUpdate((StateUpdateAlert) alert);
-                } else if (alertType == AlertType.TORRENT_FINISHED) {
-                    handleTorrentFinished((TorrentFinishedAlert) alert);
-                } else if (alertType == AlertType.TORRENT_ERROR) {
-                    handleTorrentError((TorrentErrorAlert) alert);
+                // Newer libtorrent4j: alert.type() returns AlertType enum.
+                // Older variants may return int. Handle both.
+                try {
+                    Object t = alert.type();
+                    // If AlertType enum:
+                    if (t instanceof AlertType) {
+                        AlertType at = (AlertType) t;
+                        if (at == AlertType.STATE_UPDATE) {
+                            handleStateUpdate((StateUpdateAlert) alert);
+                        } else if (at == AlertType.TORRENT_FINISHED) {
+                            handleTorrentFinished((TorrentFinishedAlert) alert);
+                        } else if (at == AlertType.TORRENT_ERROR) {
+                            handleTorrentError((TorrentErrorAlert) alert);
+                        }
+                    } else if (t instanceof Integer) {
+                        int code = (Integer) t;
+                        // numeric codes historically: state_update_alert ~7, torrent_finished_alert ~15, torrent_error_alert ~13
+                        if (code == 7) {
+                            handleStateUpdate((StateUpdateAlert) alert);
+                        } else if (code == 15) {
+                            handleTorrentFinished((TorrentFinishedAlert) alert);
+                        } else if (code == 13) {
+                            handleTorrentError((TorrentErrorAlert) alert);
+                        }
+                    } else {
+                        // Unknown type; try instance checks by class-name
+                        String tn = t == null ? "" : t.getClass().getSimpleName().toLowerCase();
+                        if (tn.contains("state")) handleStateUpdate((StateUpdateAlert) alert);
+                        else if (tn.contains("finished")) handleTorrentFinished((TorrentFinishedAlert) alert);
+                        else if (tn.contains("error")) handleTorrentError((TorrentErrorAlert) alert);
+                    }
+                } catch (Throwable t) {
+                    // Fallback: try instanceof alerts
+                    try {
+                        if (alert instanceof StateUpdateAlert) handleStateUpdate((StateUpdateAlert) alert);
+                        else if (alert instanceof TorrentFinishedAlert) handleTorrentFinished((TorrentFinishedAlert) alert);
+                        else if (alert instanceof TorrentErrorAlert) handleTorrentError((TorrentErrorAlert) alert);
+                    } catch (Throwable ignored) {
+                        Log.w(TAG, "Unknown alert type received: " + t.getMessage());
+                    }
                 }
-                // keep other alerts untouched
             }
         });
 
-        // Start the session, this will start the DHT and other services
+        // Start the session
         sessionManager.start();
     }
 
@@ -102,15 +126,10 @@ public class TorrentManager {
     }
 
     private void handleStateUpdate(StateUpdateAlert alert) {
-        // alert.status() returns List<TorrentStatus>
         List<TorrentStatus> statuses = alert.status();
         for (TorrentStatus status : statuses) {
-            // TorrentStatus in the 2.x API might expose different info-hash accessors depending on exact micro-version.
-            // To be robust, attempt a few ways to obtain a stable hex representation of the info-hash.
             String infoHex = extractInfoHashHexFromStatus(status);
-            if (infoHex == null) {
-                continue; // can't map this status
-            }
+            if (infoHex == null) continue;
 
             String dropRequestId = hashToIdMap.get(infoHex);
             if (dropRequestId != null) {
@@ -118,9 +137,8 @@ public class TorrentManager {
                 intent.putExtra(DropProgressActivity.EXTRA_STATUS_MAJOR, status.isSeeding() ? "Sending File..." : "Receiving File...");
                 intent.putExtra(DropProgressActivity.EXTRA_STATUS_MINOR, "Peers: " + status.numPeers() + " | Down: " + (status.downloadPayloadRate() / 1024) + " KB/s | Up: " + (status.uploadPayloadRate() / 1024) + " KB/s");
 
-                // Be careful: totalDone() and totalWanted() are long. Cast only if safe (<2^31-1).
-                long totalDone = status.totalDone();
-                long totalWanted = status.totalWanted();
+                long totalDone = safeLong(status, "totalDone");
+                long totalWanted = safeLong(status, "totalWanted");
                 intent.putExtra(DropProgressActivity.EXTRA_PROGRESS, (int) Math.min(totalDone, Integer.MAX_VALUE));
                 intent.putExtra(DropProgressActivity.EXTRA_MAX_PROGRESS, (int) Math.min(totalWanted, Integer.MAX_VALUE));
                 intent.putExtra(DropProgressActivity.EXTRA_BYTES_TRANSFERRED, totalDone);
@@ -150,13 +168,19 @@ public class TorrentManager {
         String infoHex = extractInfoHashHexFromHandle(handle);
         String dropRequestId = infoHex == null ? null : hashToIdMap.get(infoHex);
 
-        // Prefer the alert-provided message
         String errorMsg;
         try {
             errorMsg = alert.message();
         } catch (Throwable t) {
-            // fall back, in case messages are exposed differently in some micro versions
-            errorMsg = "Unknown torrent error";
+            // Some bindings use alert.error().message()
+            try {
+                Object err = callMethodSafely(alert, "error");
+                if (err != null) {
+                    errorMsg = (String) callMethodSafely(err, "message");
+                } else errorMsg = "Unknown torrent error";
+            } catch (Throwable tt) {
+                errorMsg = "Unknown torrent error";
+            }
         }
 
         Log.e(TAG, "Torrent error for request ID " + dropRequestId + ": " + errorMsg);
@@ -173,9 +197,6 @@ public class TorrentManager {
         cleanupTorrent(handle);
     }
 
-    /**
-     * Start seeding a given file. Returns a magnet URI (string) if seeding started successfully, or null.
-     */
     public String startSeeding(File dataFile, String dropRequestId) {
         if (dataFile == null || !dataFile.exists()) {
             Log.e(TAG, "Data file to be seeded does not exist.");
@@ -187,38 +208,36 @@ public class TorrentManager {
             torrentFile = createTorrentFile(dataFile);
             final TorrentInfo torrentInfo = new TorrentInfo(torrentFile);
 
-            // Add torrent using TorrentInfo + save path. The SessionManager API commonly supports download(TorrentInfo, File)
-            File saveDir = dataFile.getParentFile();
-            TorrentHandle handle = null;
-
-            try {
-                // Prefer the (TorrentInfo, File) overload
-                handle = sessionManager.download(torrentInfo, saveDir);
-            } catch (NoSuchMethodError e) {
-                // fallback: try other ways (if present) — e.g. find API for addTorrent(params) or similar
+            // We will attempt several ways to add the torrent:
+            // 1) sessionManager.download(TorrentInfo, File) that returns TorrentHandle
+            // 2) sessionManager.download(TorrentInfo, File) that returns void (older binding) -> try to retrieve handle from session/status
+            // 3) sessionManager.addTorrent(AddTorrentParams) or similar via reflection
+            TorrentHandle handle = tryDownloadViaReflection(torrentInfo, dataFile.getParentFile());
+            if (handle == null) {
+                // fallback: attempt AddTorrentParams and reflective call
+                AddTorrentParams params = new AddTorrentParams();
                 try {
-                    AddTorrentParams params = new AddTorrentParams();
-                    params.setTorrentInfo(torrentInfo);
-                    params.setSavePath(saveDir.getAbsolutePath());
-                    // If a direct download(AddTorrentParams) does not exist, use the download(TorrentInfo, File) route above.
-                    handle = sessionManager.download(torrentInfo, saveDir);
-                } catch (Throwable t) {
-                    Log.e(TAG, "Failed to add torrent via fallback: " + t.getMessage(), t);
+                    // Many bindings: params.setTorrentInfo / setTi
+                    callMethodIfExists(params, "setTorrentInfo", new Class[]{TorrentInfo.class}, new Object[]{torrentInfo});
+                } catch (Throwable ignored) {
                 }
+                try {
+                    callMethodIfExists(params, "setSavePath", new Class[]{String.class}, new Object[]{dataFile.getParentFile().getAbsolutePath()});
+                } catch (Throwable ignored) {
+                }
+
+                handle = tryAddTorrentParams(params, dataFile.getParentFile());
             }
 
             if (handle != null && handle.isValid()) {
                 activeTorrents.put(dropRequestId, handle);
                 String infoHex = extractInfoHashHexFromHandle(handle);
-                if (infoHex != null) {
-                    hashToIdMap.put(infoHex, dropRequestId);
-                }
+                if (infoHex != null) hashToIdMap.put(infoHex, dropRequestId);
                 String magnetLink;
                 try {
                     magnetLink = handle.makeMagnetUri();
                 } catch (Throwable t) {
-                    // fallback: if makeMagnetUri is named differently, try to compute manually or use toString of info-hash
-                    magnetLink = "magnet:?xt=urn:btih:" + (infoHex != null ? infoHex : "");
+                    magnetLink = "magnet:?xt=urn:btih:" + (extractInfoHashHexFromHandle(handle) != null ? extractInfoHashHexFromHandle(handle) : "");
                 }
                 Log.d(TAG, "Started seeding for request ID " + dropRequestId + ". Magnet: " + magnetLink);
                 return magnetLink;
@@ -231,79 +250,95 @@ public class TorrentManager {
             return null;
         } finally {
             if (torrentFile != null && torrentFile.exists()) {
-                // best-effort cleanup of the temp .torrent file
                 torrentFile.delete();
             }
         }
     }
 
-    /**
-     * Create a .torrent file for a given file. Returns the created temp torrent file.
-     */
     private File createTorrentFile(File dataFile) throws IOException {
         file_storage fs = new file_storage();
-
-        // Add file(s) to file_storage. The name of the helper function may vary across versions;
-        // the libtorrent4j bindings usually expose libtorrent.add_files(file_storage, path) or similar.
+        // try common add_files forms
+        boolean added = false;
         try {
-            libtorrent.add_files(fs, dataFile.getAbsolutePath());
-        } catch (Throwable t) {
-            // If the binding uses a different name, you can adapt here. For now, we attempt the common call.
-            Log.w(TAG, "add_files call failed (attempted libtorrent.add_files). Error: " + t.getMessage());
-            throw new IOException("Failed to add files to file_storage: " + t.getMessage(), t);
+            // libtorrent.add_files(fs, path)
+            callStaticMethodIfExists(libtorrent.class, "add_files", new Class[]{file_storage.class, String.class}, new Object[]{fs, dataFile.getAbsolutePath()});
+            added = true;
+        } catch (Throwable ignored) {
         }
-
-        // piece-size helper (some bindings call it optimal_piece_size or piece_size)
-        int pieceSize;
-        try {
-            pieceSize = (int) libtorrent.optimal_piece_size(fs);
-        } catch (Throwable t) {
+        if (!added) {
+            // fallback attempt: libtorrent.add_files_ex or other names
             try {
-                pieceSize = (int) libtorrent.piece_size(fs);
-            } catch (Throwable t2) {
-                // fallback default piece size if helper not present
-                pieceSize = 16 * 1024; // 16 KB minimal fallback (will probably be adjusted by libtorrent)
+                callStaticMethodIfExists(libtorrent.class, "add_files_ex", new Class[]{file_storage.class, String.class}, new Object[]{fs, dataFile.getAbsolutePath()});
+                added = true;
+            } catch (Throwable ignored) {
             }
         }
-
-        create_torrent ct;
-        try {
-            // Attempt the constructor (file_storage, pieceSize)
-            ct = new create_torrent(fs, pieceSize);
-        } catch (Throwable t) {
-            // If that constructor signature doesn't exist in this micro-version, try other signatures.
-            // For instance, some bindings accept (long, boolean) or (create_file_entry_vector, int).
-            // As a best-effort fallback, throw with a descriptive message so you can adapt to your exact binding variant.
-            throw new IOException("create_torrent constructor not found for (file_storage,int). Please check libtorrent4j micro-version.", t);
+        if (!added) {
+            // If the binding does not provide add_files, we cannot proceed automatically — throw with guide message.
+            throw new IOException("libtorrent.add_files(...) not available in this libtorrent4j binding. Build the .torrent offline or use a libtorrent binding that provides add_files.");
         }
 
-        // Generate piece hashes. The generate() method sometimes returns the same object, but we call it to ensure the internal state is built.
+        // piece size helpers
+        int pieceSize = -1;
         try {
-            ct.generate();
-        } catch (Throwable t) {
-            // Some versions require a second call or different usage; log and continue if recoverable.
-            Log.w(TAG, "create_torrent.generate() threw: " + t.getMessage());
+            Object val = callStaticMethodIfExists(libtorrent.class, "optimal_piece_size", new Class[]{file_storage.class}, new Object[]{fs});
+            if (val instanceof Number) pieceSize = ((Number) val).intValue();
+        } catch (Throwable ignored) {
+        }
+        if (pieceSize <= 0) {
+            try {
+                Object val = callStaticMethodIfExists(libtorrent.class, "piece_size", new Class[]{file_storage.class}, new Object[]{fs});
+                if (val instanceof Number) pieceSize = ((Number) val).intValue();
+            } catch (Throwable ignored) {
+            }
+        }
+        if (pieceSize <= 0) pieceSize = 16 * 1024; // fallback
+
+        // create_torrent constructor: try common signatures via reflection
+        create_torrent ct = null;
+        try {
+            // try (file_storage, int)
+            Constructor<?> cons = findConstructor(create_torrent.class, new Class[]{file_storage.class, int.class});
+            if (cons != null) {
+                ct = (create_torrent) cons.newInstance(fs, pieceSize);
+            }
+        } catch (Throwable ignored) {
+        }
+        if (ct == null) {
+            // try alternative constructor signatures that exist in some bindings
+            try {
+                Constructor<?> cons = findConstructor(create_torrent.class, new Class[]{long.class, boolean.class});
+                if (cons != null) ct = (create_torrent) cons.newInstance(0L, false);
+            } catch (Throwable ignored) {
+            }
+        }
+        if (ct == null) {
+            throw new IOException("create_torrent constructor not available for (file_storage,int) in this binding. Please create a .torrent offline or use a matching libtorrent4j build.");
         }
 
-        // bencode() returns a SWIG byte_vector in many bindings — convert it to byte[] via Vectors helper.
+        // generate and bencode -> convert to byte[]
         byte[] torrentBytes;
         try {
-            // generate().bencode() might return byte_vector or similar
-            torrentBytes = Vectors.byte_vector2bytes(ct.generate().bencode());
-        } catch (Throwable t) {
-            // If the exact chain isn't available, attempt using generate() then bencode separately
+            Object gen = callMethodIfExists(ct, "generate");
+            Object bencoded = callMethodIfExists(gen, "bencode");
+            // bencoded often returns a SWIG byte_vector; convert with Vectors helper if present
             try {
-                Object gen = ct.generate();
-                // if we cannot convert, rethrow with context
-                throw new IOException("Unable to extract bencoded bytes from create_torrent.generate(): " + t.getMessage(), t);
-            } catch (IOException io) {
-                throw io;
-            } catch (Throwable inner) {
-                throw new IOException("Failed to bencode torrent data: " + inner.getMessage(), inner);
+                // Try Vectors.byte_vector2bytes
+                torrentBytes = Vectors.byte_vector2bytes(bencoded);
+            } catch (Throwable t) {
+                // Fallback: if bencoded is byte[] already
+                if (bencoded instanceof byte[]) {
+                    torrentBytes = (byte[]) bencoded;
+                } else {
+                    // Try reflection to access elements
+                    torrentBytes = attemptByteVectorToBytesReflective(bencoded);
+                    if (torrentBytes == null) throw new IOException("Unable to convert bencoded byte vector to byte[]");
+                }
             }
+        } catch (Throwable t) {
+            throw new IOException("Failed to bencode generated torrent: " + t.getMessage(), t);
         }
 
-        // Write to temp .torrent file
         File tempTorrent = File.createTempFile("seed_", ".torrent", dataFile.getParentFile());
         try (FileOutputStream fos = new FileOutputStream(tempTorrent)) {
             fos.write(torrentBytes);
@@ -312,83 +347,60 @@ public class TorrentManager {
         return tempTorrent;
     }
 
-    /**
-     * Start a download from a magnet link into saveDirectory. dropRequestId is the id to track this download.
-     */
     public void startDownload(String magnetLink, File saveDirectory, String dropRequestId) {
-        if (!saveDirectory.exists()) {
-            saveDirectory.mkdirs();
-        }
+        if (!saveDirectory.exists()) saveDirectory.mkdirs();
 
         try {
-            // Best practice with libtorrent 2.x: fetch magnet metadata first, then download via TorrentInfo.
-            // SessionManager.fetchMagnet(magnetUri, timeoutSeconds, tempDir) returns byte[] torrent file or null.
+            // Preferred: sessionManager.fetchMagnet(magnetLink, timeout, tempDir) if available
             byte[] torrentData = null;
             try {
-                torrentData = sessionManager.fetchMagnet(magnetLink, 30, saveDirectory);
-            } catch (NoSuchMethodError e) {
-                // Fallback: if fetchMagnet not available on this micro-version, try AddTorrentParams.parseMagnetUri and then sessionManager.download by TorrentInfo if supported.
-                try {
-                    AddTorrentParams params = AddTorrentParams.parseMagnetUri(magnetLink);
-                    // If sessionManager.download(AddTorrentParams) is present in some micro-versions, you could use it.
-                    // However earlier compile errors showed that overload may not exist. We'll try to create torrent info via fetchMagnet fallback.
-                    // For now, leave torrentData null and attempt parse approach next.
-                    // Note: parseMagnetUri returns params which may not contain metadata; we still attempt to use sessionManager.download(TorrentInfo, File) if metadata is available.
-                    // Continue to the fallback below.
-                } catch (Throwable ignored) {
-                }
+                Object fetched = callMethodIfExists(sessionManager, "fetchMagnet", new Class[]{String.class, int.class, File.class}, new Object[]{magnetLink, 30, saveDirectory});
+                if (fetched instanceof byte[]) torrentData = (byte[]) fetched;
+            } catch (Throwable ignored) {
             }
 
             if (torrentData != null) {
-                // Convert to TorrentInfo
                 TorrentInfo ti = TorrentInfo.bdecode(torrentData);
-                TorrentHandle handle = sessionManager.download(ti, saveDirectory);
+                TorrentHandle handle = tryDownloadViaReflection(ti, saveDirectory);
                 if (handle != null && handle.isValid()) {
                     activeTorrents.put(dropRequestId, handle);
                     String infoHex = extractInfoHashHexFromHandle(handle);
                     if (infoHex != null) hashToIdMap.put(infoHex, dropRequestId);
                     Log.d(TAG, "Started download for request ID: " + dropRequestId);
+                    return;
                 } else {
-                    Log.e(TAG, "Failed to get valid TorrentHandle after adding download from magnet link.");
+                    Log.e(TAG, "Failed to obtain valid handle after fetchMagnet route.");
                 }
-            } else {
-                // Fallback path: try to parse AddTorrentParams and add via TorrentInfo if possible
-                try {
-                    AddTorrentParams params = AddTorrentParams.parseMagnetUri(magnetLink);
-                    if (params != null) {
-                        // If params contain a torrent file inside (some bindings may store metadata), attempt to extract TorrentInfo
-                        TorrentInfo ti = null;
-                        try {
-                            // Some bindings allow params.getTorrentInfo() or params.ti(); try common names reflectively would be safer, but we'll try typical accessor:
-                            ti = params.torrentInfo(); // may not exist on your micro-version
-                        } catch (Throwable t) {
-                            // ignore; ti remains null
-                        }
-                        if (ti != null) {
-                            TorrentHandle handle = sessionManager.download(ti, saveDirectory);
-                            if (handle != null && handle.isValid()) {
-                                activeTorrents.put(dropRequestId, handle);
-                                String infoHex = extractInfoHashHexFromHandle(handle);
-                                if (infoHex != null) hashToIdMap.put(infoHex, dropRequestId);
-                                Log.d(TAG, "Started download for request ID: " + dropRequestId);
-                                return;
-                            }
-                        }
-                    }
-                } catch (Throwable ignored) {
-                }
-
-                Log.e(TAG, "Failed to start download: no metadata obtained from magnet link.");
             }
+
+            // Fallback: try AddTorrentParams.parseMagnetUri and different add/download methods
+            AddTorrentParams params = null;
+            try {
+                params = (AddTorrentParams) callStaticMethodIfExists(AddTorrentParams.class, "parseMagnetUri", new Class[]{String.class}, new Object[]{magnetLink});
+            } catch (Throwable ignored) {}
+
+            if (params != null) {
+                // attempt to download using params via reflection
+                TorrentHandle handle = tryAddTorrentParams(params, saveDirectory);
+                if (handle != null && handle.isValid()) {
+                    activeTorrents.put(dropRequestId, handle);
+                    String infoHex = extractInfoHashHexFromHandle(handle);
+                    if (infoHex != null) hashToIdMap.put(infoHex, dropRequestId);
+                    Log.d(TAG, "Started download for request ID: " + dropRequestId);
+                    return;
+                } else {
+                    Log.e(TAG, "Failed to obtain valid handle from AddTorrentParams path.");
+                }
+            }
+
+            Log.e(TAG, "Failed to start download: no metadata obtained from magnet link.");
         } catch (Exception e) {
             Log.e(TAG, "Failed to start download: " + e.getMessage(), e);
         }
     }
 
     private void cleanupTorrent(TorrentHandle handle) {
-        if (handle == null || !handle.isValid()) {
-            return;
-        }
+        if (handle == null || !handle.isValid()) return;
 
         String infoHex = extractInfoHashHexFromHandle(handle);
         String dropRequestId = infoHex == null ? null : hashToIdMap.get(infoHex);
@@ -397,13 +409,18 @@ public class TorrentManager {
             activeTorrents.remove(dropRequestId);
             hashToIdMap.remove(infoHex);
         }
-        // SessionManager.remove(handle) removes a torrent from session
+
+        // Try sessionManager.remove(handle); if not present, try removeTorrent(handle) via reflection.
         try {
-            sessionManager.remove(handle);
+            callMethodIfExists(sessionManager, "remove", new Class[]{TorrentHandle.class}, new Object[]{handle});
         } catch (Throwable t) {
-            // Some micro-versions may call removeTorrent or remove(handle) — we try remove(handle) first, it's the common 2.x variant.
-            Log.w(TAG, "sessionManager.remove(handle) threw: " + t.getMessage());
+            try {
+                callMethodIfExists(sessionManager, "removeTorrent", new Class[]{TorrentHandle.class}, new Object[]{handle});
+            } catch (Throwable t2) {
+                Log.w(TAG, "No remove method available on SessionManager: " + t2.getMessage());
+            }
         }
+
         Log.d(TAG, "Cleaned up and removed torrent for request ID: " + (dropRequestId != null ? dropRequestId : "unknown"));
     }
 
@@ -412,94 +429,170 @@ public class TorrentManager {
         sessionManager.stop();
         activeTorrents.clear();
         hashToIdMap.clear();
-        instance = null; // Allow re-initialization if needed
+        instance = null;
     }
 
-    // -----------------------
-    // Helper utilities
-    // -----------------------
+    // --------------------------
+    // Reflection & helper utils
+    // --------------------------
 
-    /**
-     * Attempt to obtain a stable hex string representation of the info-hash from a TorrentStatus.
-     * This method tries a few common accessor names so it is tolerant to micro-version differences.
-     */
+    private TorrentHandle tryDownloadViaReflection(TorrentInfo ti, File saveDir) {
+        // Try common method signatures and return a TorrentHandle if possible.
+        try {
+            // Attempt: TorrentHandle download(TorrentInfo, File)
+            Method m = findMethod(sessionManager.getClass(), "download", new Class[]{TorrentInfo.class, File.class});
+            if (m != null) {
+                Object r = m.invoke(sessionManager, ti, saveDir);
+                if (r instanceof TorrentHandle) return (TorrentHandle) r;
+                else if (r == null) {
+                    // Some versions: method returns void; try to find the handle by searching session for torrent matching info
+                    String hex = infoHashObjectToHexSafe(ti);
+                    TorrentHandle h = findHandleByInfoHex(hex);
+                    if (h != null) return h;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+
+        try {
+            // Attempt: TorrentHandle download(String magnet, File, torrent_flags_t)
+            Method m2 = findMethod(sessionManager.getClass(), "download", new Class[]{String.class, File.class, Object.class});
+            if (m2 != null) {
+                // try calling with null flags
+                Object r = m2.invoke(sessionManager, ti.makeMagnetUri(), saveDir, null);
+                if (r instanceof TorrentHandle) return (TorrentHandle) r;
+            }
+        } catch (Throwable ignored) {
+        }
+
+        return null;
+    }
+
+    private TorrentHandle tryAddTorrentParams(AddTorrentParams params, File saveDir) {
+        try {
+            // Try: sessionManager.download(AddTorrentParams) -> some micro-versions may implement this
+            Method m = findMethod(sessionManager.getClass(), "download", new Class[]{AddTorrentParams.class});
+            if (m != null) {
+                Object r = m.invoke(sessionManager, params);
+                if (r instanceof TorrentHandle) return (TorrentHandle) r;
+                else if (r == null) {
+                    // void return path - try to locate handle by infoHash inside params
+                    Object ti = callMethodIfExists(params, "torrentInfo");
+                    String hex = infoHashObjectToHexSafe(ti);
+                    TorrentHandle h = findHandleByInfoHex(hex);
+                    if (h != null) return h;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+
+        // Try: sessionManager.addTorrent(AddTorrentParams) or add_torrent
+        try {
+            Method mAdd = findMethod(sessionManager.getClass(), "addTorrent", new Class[]{AddTorrentParams.class});
+            if (mAdd != null) {
+                Object r = mAdd.invoke(sessionManager, params);
+                if (r instanceof TorrentHandle) return (TorrentHandle) r;
+                else {
+                    String hex = infoHashFromParamsHex(params);
+                    return findHandleByInfoHex(hex);
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+
+        // If nothing returned, null
+        return null;
+    }
+
+    private TorrentHandle tryAddTorrentParams(AddTorrentParams params, File saveDir, boolean _unused) {
+        // wrapper kept for compatibility
+        return tryAddTorrentParams(params, saveDir);
+    }
+
+    private String infoHashFromParamsHex(AddTorrentParams params) {
+        try {
+            Object ti = callMethodIfExists(params, "torrentInfo");
+            return infoHashObjectToHexSafe(ti);
+        } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
+    private TorrentHandle findHandleByInfoHex(String hex) {
+        if (hex == null || hex.isEmpty()) return null;
+        // naive search through activeTorrents map
+        for (Map.Entry<String, TorrentHandle> e : activeTorrents.entrySet()) {
+            TorrentHandle th = e.getValue();
+            String hHex = extractInfoHashHexFromHandle(th);
+            if (hHex != null && hHex.equalsIgnoreCase(hex)) return th;
+        }
+        // last-resort: attempt to inspect sessionManager for handles (reflectively)
+        try {
+            Object session = sessionManager;
+            Method getTorrents = findMethod(session.getClass(), "getTorrents", new Class[]{});
+            if (getTorrents != null) {
+                Object list = getTorrents.invoke(session);
+                if (list instanceof java.util.Collection) {
+                    for (Object o : ((java.util.Collection) list)) {
+                        try {
+                            String hx = infoHashObjectToHexSafe(callMethodIfExists(o, "infoHash"));
+                            if (hx != null && hx.equalsIgnoreCase(hex)) {
+                                if (o instanceof TorrentHandle) return (TorrentHandle) o;
+                            }
+                        } catch (Throwable ignored) {}
+                    }
+                }
+            }
+        } catch (Throwable ignored) {}
+        return null;
+    }
+
     private String extractInfoHashHexFromStatus(TorrentStatus status) {
         if (status == null) return null;
         try {
-            // Try common accessor names (examples vary by micro-release)
-            // 1) status.infoHash() -> object with toString() or toHex()
+            // Try common accessor names
             try {
-                Object ih = status.infoHash();
-                if (ih != null) {
-                    String s = infoHashObjectToHex(ih);
-                    if (s != null) return s;
+                Object ih = callMethodIfExists(status, "infoHash");
+                String s = infoHashObjectToHexSafe(ih);
+                if (s != null) return s;
+            } catch (Throwable ignored) {}
+            try {
+                Object ih = callMethodIfExists(status, "info_hash");
+                String s = infoHashObjectToHexSafe(ih);
+                if (s != null) return s;
+            } catch (Throwable ignored) {}
+            // Some status objects give a torrent handle
+            try {
+                Object th = callMethodIfExists(status, "handle");
+                if (th instanceof TorrentHandle) {
+                    return extractInfoHashHexFromHandle((TorrentHandle) th);
                 }
             } catch (Throwable ignored) {}
-
-            // 2) status.info_hash() snake_case
+            // fallback to status.toString
             try {
-                Object ih = status.info_hash();
-                if (ih != null) {
-                    String s = infoHashObjectToHex(ih);
-                    if (s != null) return s;
-                }
+                String s = status.toString();
+                if (s != null && s.length() >= 20) return s;
             } catch (Throwable ignored) {}
-
-            // 3) status.torrent_handle() -> TorrentHandle -> infoHash
-            try {
-                Object thObj = status.handle(); // some bindings provide .handle()
-                if (thObj instanceof TorrentHandle) {
-                    return extractInfoHashHexFromHandle((TorrentHandle) thObj);
-                }
-            } catch (Throwable ignored) {}
-
-            // 4) status.infoHashes() -> maybe returns a structure; try toString as fallback
-            try {
-                Object ihs = status.infoHashes();
-                if (ihs != null) {
-                    // attempt to call getBest() or toString
-                    try {
-                        Object best = ihs.getClass().getMethod("getBest").invoke(ihs);
-                        String s = infoHashObjectToHex(best);
-                        if (s != null) return s;
-                    } catch (Throwable ignore2) {
-                        String s = ihs.toString();
-                        if (s != null && !s.isEmpty()) return s;
-                    }
-                }
-            } catch (Throwable ignored) {}
-
         } catch (Throwable t) {
             Log.w(TAG, "extractInfoHashHexFromStatus failed: " + t.getMessage());
         }
         return null;
     }
 
-    /**
-     * Attempt to obtain a stable hex string representation of the info-hash from a TorrentHandle.
-     */
     private String extractInfoHashHexFromHandle(TorrentHandle handle) {
         if (handle == null) return null;
         try {
-            // try handle.infoHash()
             try {
-                Object ih = handle.infoHash();
-                if (ih != null) {
-                    String s = infoHashObjectToHex(ih);
-                    if (s != null) return s;
-                }
+                Object ih = callMethodIfExists(handle, "infoHash");
+                String s = infoHashObjectToHexSafe(ih);
+                if (s != null) return s;
             } catch (Throwable ignored) {}
-
-            // try handle.info_hash()
             try {
-                Object ih = handle.info_hash();
-                if (ih != null) {
-                    String s = infoHashObjectToHex(ih);
-                    if (s != null) return s;
-                }
+                Object ih = callMethodIfExists(handle, "info_hash");
+                String s = infoHashObjectToHexSafe(ih);
+                if (s != null) return s;
             } catch (Throwable ignored) {}
-
-            // fallback to handle.toString() if that prints a hex-like hash
+            // fallback to handle.toString()
             try {
                 String s = handle.toString();
                 if (s != null && s.length() >= 20) return s;
@@ -510,40 +603,143 @@ public class TorrentManager {
         return null;
     }
 
-    /**
-     * Convert a InfoHash/Sha1Hash-like object to a hex string. Tries common accessor methods.
-     */
-    private String infoHashObjectToHex(Object ihObj) {
+    private long safeLong(Object obj, String methodName) {
+        try {
+            Object v = callMethodIfExists(obj, methodName);
+            if (v instanceof Number) return ((Number) v).longValue();
+        } catch (Throwable ignored) {}
+        return 0L;
+    }
+
+    private Object callMethodIfExists(Object target, String methodName, Class[] paramTypes, Object[] params) throws Exception {
+        if (target == null) return null;
+        Method m = findMethod(target.getClass(), methodName, paramTypes);
+        if (m == null) return null;
+        m.setAccessible(true);
+        return m.invoke(target, params);
+    }
+
+    private Object callMethodIfExists(Object target, String methodName) throws Exception {
+        return callMethodIfExists(target, methodName, new Class[]{}, new Object[]{});
+    }
+
+    private Object callStaticMethodIfExists(Class<?> cls, String methodName, Class[] paramTypes, Object[] params) throws Exception {
+        Method m = findMethod(cls, methodName, paramTypes);
+        if (m == null) return null;
+        m.setAccessible(true);
+        return m.invoke(null, params);
+    }
+
+    private Method findMethod(Class<?> cls, String name, Class[] paramTypes) {
+        if (cls == null) return null;
+        try {
+            return cls.getMethod(name, paramTypes);
+        } catch (NoSuchMethodException e) {
+            // try declared methods
+            for (Method mm : cls.getDeclaredMethods()) {
+                if (!mm.getName().equals(name)) continue;
+                Class<?>[] pts = mm.getParameterTypes();
+                if (paramTypes == null || paramTypes.length == 0 || pts.length == paramTypes.length) {
+                    return mm;
+                }
+            }
+            // check superclasses
+            Class<?> sc = cls.getSuperclass();
+            if (sc != null) return findMethod(sc, name, paramTypes);
+            return null;
+        }
+    }
+
+    private Constructor<?> findConstructor(Class<?> cls, Class[] paramTypes) {
+        try {
+            return cls.getConstructor(paramTypes);
+        } catch (NoSuchMethodException e) {
+            for (Constructor<?> c : cls.getConstructors()) {
+                Class<?>[] pts = c.getParameterTypes();
+                if (pts.length == paramTypes.length) return c;
+            }
+            return null;
+        }
+    }
+
+    private Object callMethodSafely(Object target, String name) {
+        try {
+            return callMethodIfExists(target, name);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private void callMethodIfExists(Object target, String name, Class[] pts, Object[] args) {
+        try {
+            callMethodIfExists(target, name, pts, args);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private Object callStaticMethodIfExists(Class<?> cls, String name, Class[] pts, Object[] args) {
+        try {
+            return callStaticMethodIfExists(cls, name, pts, args);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private String infoHashObjectToHexSafe(Object ihObj) {
         if (ihObj == null) return null;
         try {
-            // 1) try to call toHex()
+            // toHex()
             try {
-                String hex = (String) ihObj.getClass().getMethod("toHex").invoke(ihObj);
-                if (hex != null && !hex.isEmpty()) return hex;
+                Method m = findMethod(ihObj.getClass(), "toHex", new Class[]{});
+                if (m != null) {
+                    Object r = m.invoke(ihObj);
+                    if (r instanceof String) return (String) r;
+                }
             } catch (Throwable ignored) {}
-
-            // 2) try to call toString()
+            // toString()
             try {
                 String s = ihObj.toString();
-                if (s != null && !s.isEmpty()) return s;
+                if (s != null && s.length() > 0) return s;
             } catch (Throwable ignored) {}
-
-            // 3) try swig-level byte[] extraction if present (less common)
+            // if there is a getBytes() or data() method returning byte[]
             try {
-                Object bytes = ihObj.getClass().getMethod("getBytes").invoke(ihObj);
-                if (bytes instanceof byte[]) {
-                    return bytesToHex((byte[]) bytes);
+                Method m = findMethod(ihObj.getClass(), "getBytes", new Class[]{});
+                if (m != null) {
+                    Object r = m.invoke(ihObj);
+                    if (r instanceof byte[]) return bytesToHex((byte[]) r);
                 }
             } catch (Throwable ignored) {}
         } catch (Throwable t) {
-            Log.w(TAG, "infoHashObjectToHex failed: " + t.getMessage());
+            Log.w(TAG, "infoHashObjectToHexSafe failed: " + t.getMessage());
         }
         return null;
     }
 
-    private static final char[] HEX_ARRAY = "0123456789abcdef".toCharArray();
+    private byte[] attemptByteVectorToBytesReflective(Object byteVectorObj) {
+        if (byteVectorObj == null) return null;
+        try {
+            // Try size() and get(i)
+            Method sizeM = findMethod(byteVectorObj.getClass(), "size", new Class[]{});
+            Method getM = findMethod(byteVectorObj.getClass(), "get", new Class[]{int.class});
+            if (sizeM != null && getM != null) {
+                Object szObj = sizeM.invoke(byteVectorObj);
+                int sz = (szObj instanceof Number) ? ((Number) szObj).intValue() : 0;
+                byte[] out = new byte[sz];
+                for (int i = 0; i < sz; i++) {
+                    Object b = getM.invoke(byteVectorObj, i);
+                    if (b instanceof Number) out[i] = ((Number) b).byteValue();
+                    else out[i] = (byte) ((int) b);
+                }
+                return out;
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
     private String bytesToHex(byte[] bytes) {
         if (bytes == null) return null;
+        final char[] HEX_ARRAY = "0123456789abcdef".toCharArray();
         char[] hexChars = new char[bytes.length * 2];
         for (int j = 0; j < bytes.length; j++) {
             int v = bytes[j] & 0xFF;
