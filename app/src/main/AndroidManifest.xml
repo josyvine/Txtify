@@ -1,332 +1,73 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools"> 
-    <!--
-        FIX 1: Removed the deprecated 'package' attribute.
-        The namespace is now correctly defined in build.gradle.
-    -->
+    package="com.txtify.app">
 
-    <uses-sdk
-        android:minSdkVersion="23"
-        android:targetSdkVersion="34"
-        tools:overrideLibrary="com.google.android.gms.ads_identifier" />
-    <!--
-        FIX 2: Increased minSdkVersion to 23 to match the build.gradle file and satisfy the
-        Firebase library requirements.
-    -->
-
-    <!-- Permissions for File Access -->
-    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <!-- Permissions to read and write files -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
-
-    <!-- Permissions for Network & Services -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <!-- NEW: Permission to access the internet for the contact form -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
-    <!-- Permission to get cache size of other apps -->
-    <uses-permission android:name="android.permission.GET_PACKAGE_SIZE" />
-
-    <!-- NEW PERMISSIONS FOR WI-FI DIRECT SHARE & NOTIFICATIONS -->
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
-    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES"
-        android:usesPermissionFlags="neverForLocation" />
-    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
-    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
 
 
-    <!-- Permissions for Sensor Ritual Lock -->
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
-
-
-    <!-- Declare that the app uses these sensors. 'required="false"' means the app can run
-	on devices without them, though the hide feature might be limited. -->
-    <uses-feature android:name="android.hardware.sensor.accelerometer" android:required="false" />
-    <uses-feature android:name="android.hardware.sensor.compass" android:required="false" />
-    <uses-feature android:name="android.hardware.sensor.proximity" android:required="false" />
-    <uses-feature android:name="android.hardware.sensor.light" android:required="false" />
-    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
-    <!-- NEW: Declare that the app uses Wi-Fi Direct -->
-    <uses-feature android:name="android.hardware.wifi.direct" android:required="true" />
-
-
+    <!--
+    The 'requestLegacyExternalStorage' attribute is REQUIRED for targetSdkVersion 29
+    to allow the app's file saving logic to work correctly on Android 10.
+    -->
     <application
         android:allowBackup="true"
-        android:icon="@drawable/hfm"
-        android:label="HFM App">
+        android:icon="@drawable/txtify"
+        android:label="@string/app_name"
+        android:roundIcon="@drawable/txtify"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme"
+        android:requestLegacyExternalStorage="true"
+        android:name=".MyApplication">
 
+        <!-- Main Activity Declaration -->
         <activity
             android:name=".MainActivity"
-            android:configChanges="orientation|screenSize"
-            android:exported="true"
-            android:theme="@style/AppTheme.MainActivity">
+            android:label="@string/app_name"
+            android:windowSoftInputMode="adjustResize">
+
+            <!-- This intent-filter makes the app show up in the launcher -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!--
+            This intent-filter allows the app to be an option when you
+            tap "Open with" on a file in another file manager.
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <action android:name="android.intent.action.EDIT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
         </activity>
 
+        <!-- Help Activity Declaration -->
         <activity
-            android:name=".SearchActivity"
-            android:label="Search Files"
-            android:theme="@style/AppTheme.Light"
-            android:windowSoftInputMode="adjustResize"
-            android:exported="false"/>
+            android:name=".HelpActivity"
+            android:label="@string/help_title"
+            android:parentActivityName=".MainActivity" />
 
+        <!-- Zip Contents Activity Declaration -->
         <activity
-            android:name=".MassDeleteActivity"
-            android:label="Mass Selection Delete"
-            android:theme="@style/AppTheme.Light"
-            android:windowSoftInputMode="adjustResize"
-            android:exported="false"/>
+            android:name=".ZipContentsActivity"
+            android:label="ZIP Contents"
+            android:parentActivityName=".MainActivity" />
 
-        <activity
-            android:name=".RecycleBinActivity"
-            android:label="Recycle Bin"
-            android:theme="@style/AppTheme.Light"
-            android:exported="false"/>
-
+        <!-- NEW: Contact Activity Declaration -->
         <activity
             android:name=".ContactActivity"
-            android:label="Contact Us"
-            android:theme="@style/AppTheme.Light"
-            android:exported="false"/>
-
-        <activity
-            android:name=".CacheCleanerActivity"
-            android:label="Cache Cleaner"
-            android:theme="@style/AppTheme.Light"
-            android:exported="false"/>
-
-        <activity
-            android:name=".ReaderActivity"
-            android:label="File Reader"
-            android:theme="@style/AppTheme.Light"
-            android:exported="false"/>
-        <activity
-            android:name=".TextViewerActivity"
-            android:label="Text Viewer"
-            android:theme="@style/AppTheme.Light"
-            android:exported="false"/>
-        <activity
-            android:name=".PdfViewerActivity"
-            android:label="PDF Viewer"
-            android:theme="@style/AppTheme.Light"
-            android:exported="false"/>
-
-        <activity
-            android:name=".ImageViewerActivity"
-            android:label="Image Viewer"
-            android:theme="@style/AppTheme.Light"
-            android:exported="false"/>
-        <activity
-            android:name=".VideoViewerActivity"
-            android:label="Video Viewer"
-            android:theme="@style/AppTheme.Light"
-            android:exported="false"/>
-
-        <activity
-            android:name=".AudioPlayerActivity"
-            android:label="Audio Player"
-            android:theme="@style/AppTheme.Light"
-            android:exported="false"/>
-
-        <activity
-            android:name=".StorageMapActivity"
-            android:label="Storage Map"
-            android:theme="@style/AppTheme.Dark"
-            android:exported="false"/>
-
-        <activity
-            android:name=".DashboardActivity"
-            android:label="Daily File Dashboard"
-            android:theme="@style/AppTheme.Light"
-            android:exported="false"/>
-
-        <activity
-            android:name=".StorageBrowserActivity"
-            android:label="Storage Browser"
-            android:theme="@style/AppTheme.Light"
-            android:exported="false"/>
-
-        <activity
-            android:name=".FolderListActivity"
-            android:label="Category Folders"
-            android:theme="@style/AppTheme.Light"
-            android:exported="false"/>
-
-        <activity
-            android:name=".FileDeleteActivity"
-            android:label="Delete Files"
-            android:theme="@style/AppTheme.Light"
-            android:exported="false"/>
-
-        <activity
-            android:name=".FileHiderActivity"
-            android:label="Secure File Hider"
-            android:theme="@style/AppTheme.Light"
-            android:exported="false"/>
-
-        <activity
-            android:name=".RitualListActivity"
-            android:label="Unlock Files"
-            android:theme="@style/AppTheme.Light"
-            android:exported="false"/>
-        <activity
-            android:name=".RitualRecordTapsActivity"
-            android:label="Create Ritual (Taps)"
-            android:theme="@style/AppTheme.Light"
-            android:exported="false"/>
-        <activity
-            android:name=".RitualRecordShakesActivity"
-            android:label="Create Ritual (Shakes)"
-            android:theme="@style/AppTheme.Light"
-            android:exported="false"/>
-        <activity
-            android:name=".RitualRecordOrientationActivity"
-            android:label="Create Ritual (Orientation)"
-            android:theme="@style/AppTheme.Light"
-            android:exported="false"/>
-        <activity
-            android:name=".RitualVerifyTapsActivity"
-            android:label="Unlock Ritual (Taps)"
-            android:theme="@style/AppTheme.Light"
-            android:exported="false"/>
-        <activity
-            android:name=".RitualVerifyShakesActivity"
-            android:label="Unlock Ritual (Shakes)"
-            android:theme="@style/AppTheme.Light"
-            android:exported="false"/>
-        <activity
-            android:name=".RitualVerifyOrientationActivity"
-            android:label="Unlock Ritual (Orientation)"
-            android:theme="@style/AppTheme.Light"
-            android:exported="false"/>
-
-        <activity
-            android:name=".MapFallbackSetupActivity"
-            android:label="Set Secret Location"
-            android:theme="@style/AppTheme.Light"
-            android:exported="false"/>
-
-        <activity
-            android:name=".MapFallbackUnlockActivity"
-            android:label="Verify Secret Location"
-            android:theme="@style/AppTheme.Light"
-            android:exported="false"/>
-
-        <!-- HFM SHARE ACTIVITY DECLARATIONS -->
-        <activity
-            android:name=".ShareHubActivity"
-            android:label="HFM Share"
-            android:theme="@style/AppTheme.Light"
-            android:exported="false"/>
-        <activity 
-            android:name=".FilePickerActivity"
-            android:label="Select Files"
-            android:theme="@style/AppTheme.Light"
-            android:exported="false"/>
-        <activity
-            android:name=".TransferProgressActivity"
-            android:label="Transfer Progress"
-            android:theme="@style/AppTheme.Light"
-            android:configChanges="orientation|screenSize|keyboardHidden"
-            android:exported="false"/>
-
-        <!-- NEW ACTIVITY DECLARATIONS FOR THE NEW FILE SHARING FLOW -->
-        <activity
-            android:name=".CategoryPickerActivity"
-            android:label="Select Content"
-            android:theme="@style/AppTheme.Light"
-            android:exported="false"/>
-        <activity
-            android:name=".MediaPickerActivity"
-            android:label="Select Media"
-            android:theme="@style/AppTheme.Light"
-            android:exported="false"/>
-        <activity
-            android:name=".AppPickerActivity"
-            android:label="Select Apps"
-            android:theme="@style/AppTheme.Light"
-            android:exported="false"/>
-        <activity
-            android:name=".AdvancedFilePickerActivity"
-            android:label="Browse Files"
-            android:theme="@style/AppTheme.Light"
-            android:exported="false"/>
-
-        <!-- NEW ACTIVITY FOR HFM MESSENGER DROP -->
-        <activity
-            android:name=".HFMDropActivity"
-            android:label="HFM Messenger Drop"
-            android:theme="@style/AppTheme.Light"
-            android:exported="false"/>
-            
-        <!-- THIS IS THE FIX: Declare the new DropProgressActivity -->
-        <activity
-            android:name=".DropProgressActivity"
-            android:label="HFM Drop Progress"
-            android:theme="@style/AppTheme.Light"
-            android:exported="false"/>
-
-
-        <provider
-            android:name="androidx.core.content.FileProvider"
-            android:authorities="com.hfm.app.provider"
-            android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/file_provider_paths" />
-        </provider>
-
-        <service
-            android:name=".DeleteService"
-            android:exported="false"
-            android:foregroundServiceType="dataSync"/>
-
-        <service
-            android:name=".FileOperationService"
-            android:exported="false"
-            android:foregroundServiceType="dataSync"/>
-
-        <service
-            android:name=".CompressionService"
-            android:exported="false"
-            android:foregroundServiceType="dataSync"/>
-
-        <service
-            android:name=".FileTransferService"
-            android:exported="false"
-            android:foregroundServiceType="dataSync"/>
-
-        <!-- NEW SERVICES FOR HFM MESSENGER DROP -->
-        <service
-            android:name=".SenderService"
-            android:exported="false"
-            android:foregroundServiceType="dataSync"/>
-
-        <service
-            android:name=".DownloadService"
-            android:exported="false"
-            android:foregroundServiceType="dataSync"/>
-
-        <receiver
-            android:name=".WiFiDirectBroadcastReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.net.wifi.p2p.STATE_CHANGED" />
-                <action android:name="android.net.wifi.p2p.PEERS_CHANGED" />
-                <action android:name="android.net.wifi.p2p.CONNECTION_STATE_CHANGE" />
-                <action android:name="android.net.wifi.p2p.THIS_DEVICE_CHANGED" />
-            </intent-filter>
-        </receiver>
+            android:label="@string/contact_title"
+            android:parentActivityName=".HelpActivity" />
 
     </application>
-
 </manifest>
+
