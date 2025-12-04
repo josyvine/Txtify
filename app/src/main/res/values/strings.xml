@@ -1,4 +1,52 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">HFM App</string>
+    <string name="app_name">TXTIFY</string>
+    <string name="help_title">Help &amp; Support</string>
+    <string name="contact_title">Contact Us</string>
+
+    <!--
+	FIX: These two lines are REQUIRED by the side menu button (ActionBarDrawerToggle).
+	Their absence was causing the startup crash.
+    -->
+    <string name="navigation_drawer_open">Open navigation drawer</string>
+    <string name="navigation_drawer_close">Close navigation drawer</string>
+
+    <!-- UPDATED: Help Screen Text -->
+    <string name="help_what_title">What is TXTIFY?</string>
+    <string name="help_what_content">TXTIFY is a utility that creates a .txt copy of any file. This is useful for uploading source code, scripts, or other documents to services that only accept plain text files, without altering your original file.</string>
+
+    <string name="help_how_title">How to Use</string>
+    <string name="help_how_content">
+        1.  **Choose a Save Folder:** Use the side menu to select a permanent folder where all your .txt copies will be saved.\n
+        2.  **Add Files:** Use "Browse Single File", "Batch Convert Files", or "Process ZIP File" from the menu to add files to the conversion queue.\n
+        3.  **Convert:** Your added files will appear as a "project" on the main screen. Tap on it and confirm to save the .txt copies to your chosen folder.
+    </string>
+
+    <string name="help_notes_title">Important Notes</string>
+    <string name="help_notes_content">
+        - Your original files are never modified.\n
+        - By default, if a file named `example.txt` already exists, a new copy will be named `example-1.txt`. You can change this behavior in Settings.\n
+        - For Android 10 and above, you must grant folder permissions when prompted to ensure the app can save files.
+    </string>
+
+    <string name="help_trouble_title">Troubleshooting</string>
+    <string name="help_trouble_content">
+        - **"Permission Denied" Errors:** If you see errors about saving files, go to the side menu and use "Choose Save Folder" again to re-grant permission to your target directory.\n
+        - **App Crashes:** If the app closes unexpectedly, please use the "Contact Us" button below to send us a message.
+    </string>
+
+    <!-- NEW: Strings for Contact Page -->
+    <string name="contact_us_button">Contact Us</string>
+    <string name="contact_instructions">Have a question or feedback? Fill out the form below and we will get back to you as soon as possible.</string>
+    <string name="contact_name_hint">Your Name</string>
+    <string name="contact_email_hint">Your Email Address</string>
+    <string name="contact_message_hint">Your Message</string>
+    <string name="contact_send_button">Send Message</string>
+    <string name="contact_validation_empty">This field cannot be empty.</string>
+    <string name="contact_validation_email">Please enter a valid email address.</string>
+    <string name="contact_sending_message">Sending...</string>
+    <string name="contact_success">Thank you! Your message has been sent.</string>
+    <string name="contact_error">Something went wrong. Please try again later.</string>
+
 </resources>
+
