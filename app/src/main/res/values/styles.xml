@@ -1,61 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Base Theme - DO NOT USE DIRECTLY -->
-    <style name="AppThemeBase" parent="android:Theme.DeviceDefault.Light.NoActionBar">
-        <item name="android:windowBackground">?attr/appBackgroundColor</item>
-        <item name="android:colorPrimary">?attr/appPrimaryColor</item>
-        <item name="android:textColor">?attr/appTextColor</item>
-        <item name="android:buttonStyle">@style/AppButton</item>
-    </style>
-
-    <style name="AppButton" parent="android:Widget.Button">
-        <item name="android:textColor">?attr/appHeaderTextColor</item>
-        <item name="android:background">?attr/appPrimaryColor</item>
-    </style>
-
-    <!-- 1. Default Light Theme -->
-    <style name="AppTheme.Light" parent="AppThemeBase">
-        <item name="appPrimaryColor">@color/lt_colorPrimary</item>
-        <item name="appBackgroundColor">@color/lt_backgroundColor</item>
-        <item name="appTextColor">@color/lt_textColor</item>
-        <item name="appHeaderTextColor">@color/lt_headerTextColor</item>
-    </style>
-
-    <!-- 2. Dark Theme -->
-    <style name="AppTheme.Dark" parent="AppThemeBase">
-        <item name="appPrimaryColor">@color/dt_colorPrimary</item>
-        <item name="appBackgroundColor">@color/dt_backgroundColor</item>
-        <item name="appTextColor">@color/dt_textColor</item>
-        <item name="appHeaderTextColor">@color/dt_headerTextColor</item>
-    </style>
-
-    <!-- 3. AMOLED Theme -->
-    <style name="AppTheme.Amoled" parent="AppThemeBase">
-        <item name="appPrimaryColor">@color/amoled_colorPrimary</item>
-        <item name="appBackgroundColor">@color/amoled_backgroundColor</item>
-        <item name="appTextColor">@color/amoled_textColor</item>
-        <item name="appHeaderTextColor">@color/amoled_headerTextColor</item>
-    </style>
-
-    <!-- 4. Nordic Theme -->
-    <style name="AppTheme.Nordic" parent="AppThemeBase">
-        <item name="appPrimaryColor">@color/nordic_colorPrimary</item>
-        <item name="appBackgroundColor">@color/nordic_backgroundColor</item>
-        <item name="appTextColor">@color/nordic_textColor</item>
-        <item name="appHeaderTextColor">@color/nordic_headerTextColor</item>
-    </style>
-
-    <!-- 5. Solarized Theme -->
-    <style name="AppTheme.Solarized" parent="AppThemeBase">
-        <item name="appPrimaryColor">@color/solarized_colorPrimary</item>
-        <item name="appBackgroundColor">@color/solarized_backgroundColor</item>
-        <item name="appTextColor">@color/solarized_textColor</item>
-        <item name="appHeaderTextColor">@color/solarized_headerTextColor</item>
-    </style>
-
-    <!-- Special Dark Theme for MainActivity WebView background -->
-    <style name="AppTheme.MainActivity" parent="android:Theme.DeviceDefault.NoActionBar.Fullscreen">
-        <item name="android:windowBackground">#071023</item>
+    <style name="AppTheme" parent="Theme.AppCompat.Light.NoActionBar">
+        <item name="colorPrimary">@color/colorPrimary</item>
+        <item name="colorPrimaryDark">@color/colorPrimaryDark</item>
+        <item name="colorAccent">@color/colorAccent</item>
     </style>
 </resources>
-
